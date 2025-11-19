@@ -109,13 +109,14 @@ class DispatchOptimizer:
             FROM {schema}.current_dispatches_csv cd
             WHERE cd."Customer_latitude" IS NOT NULL 
                 AND cd."Customer_longitude" IS NOT NULL
-                AND cd."State" IS NOT NULL;
+                AND cd."State" IS NOT NULL
+                AND DATE(cd."Appointment_start_datetime") >= '2025-11-12';
             """
             
             dispatches = pd.read_sql_query(dispatch_query, loader.connection)
             dispatches['appointment_start_datetime'] = pd.to_datetime(dispatches['appointment_start_datetime'])
             dispatches['appointment_end_datetime'] = pd.to_datetime(dispatches['appointment_end_datetime'])
-            print(f"  [OK] Loaded {len(dispatches)} dispatches")
+            print(f"  [OK] Loaded {len(dispatches)} dispatches (excluding historical before 2025-11-12)")
             
             # Load technicians
             tech_query = f"""
@@ -218,6 +219,60 @@ class DispatchOptimizer:
             success_prob = ml_success_prob
         
         return success_prob, estimated_duration, distance, skill_match, workload_ratio
+    
+    def calculate_dispatch_grade(self, distance, overrun, success_prob):
+        """
+        Calculate Dispatch Grade (0-100 scale)
+        
+        Components:
+        - Distance Score (30 pts): Exponential decay, 0 at 250+ km
+        - Duration Score (30 pts): On-time = 30, bonus for early, penalty for late
+        - Productive Dispatch (25 pts): success_prob * 25
+        - First Time Fix (15 pts): success_prob * 15
+        
+        Args:
+            distance: Distance in km
+            overrun: Duration overrun in minutes (negative = early, positive = late)
+            success_prob: Success probability (0-1)
+        
+        Returns:
+            grade: Total grade (0-100), capped
+        """
+        grade = 0
+        
+        # === DISTANCE SCORE (30 pts max, exponential decay) ===
+        max_distance_for_zero = 250
+        if distance >= max_distance_for_zero:
+            distance_score = 0
+        else:
+            # Exponential decay: score = 30 * exp(-k * distance)
+            k = 0.02
+            distance_score = 30 * np.exp(-k * distance)
+            distance_score = max(0, min(30, distance_score))
+        
+        # === DURATION SCORE (30 pts base, bonus for early, penalty for late) ===
+        if overrun <= 0:
+            # Early finish - bonus points (up to 6 pts for -30 min)
+            bonus = min(6, abs(overrun) / 30 * 6)
+            duration_score = 30 + bonus
+        else:
+            # Late finish - penalty (0 pts at +90 min)
+            penalty_rate = 30 / 90
+            duration_score = max(0, 30 - (overrun * penalty_rate))
+        
+        # === PRODUCTIVE DISPATCH (25 pts) ===
+        productive_score = success_prob * 25
+        
+        # === FIRST TIME FIX (15 pts) ===
+        ftf_score = success_prob * 15
+        
+        # Total grade
+        grade = distance_score + duration_score + productive_score + ftf_score
+        
+        # Cap at 100
+        grade = min(100, grade)
+        
+        return grade, distance_score, duration_score, productive_score, ftf_score
     
     def calculate_score(self, success_prob, workload_ratio, distance, overrun, 
                        max_distance, max_overrun):
@@ -823,7 +878,7 @@ class DispatchOptimizer:
         
         return results_df, warnings_df
     
-    def generate_comparison_report(self, dispatches, technicians, results_df):
+    def generate_comparison_report(self, dispatches, technicians, results_df, warnings_df=None):
         """Generate before/after comparison report"""
         print("\n[5/6] Generating comparison report...")
         print("  Calculating original assignment metrics...")
@@ -867,12 +922,26 @@ class DispatchOptimizer:
         improvement = optimized_metrics['avg_distance'] - original_metrics['avg_distance']
         report.append(f"Improvement:        {improvement:+.1f} km ({improvement/original_metrics['avg_distance']*100:+.1f}%)")
         
-        # Estimated Duration
-        report.append("\n### AVERAGE ESTIMATED DURATION ###\n")
-        report.append(f"Before (Original):  {original_metrics['avg_duration']:.1f} min")
-        report.append(f"After (Optimized):  {optimized_metrics['avg_duration']:.1f} min")
-        improvement = optimized_metrics['avg_duration'] - original_metrics['avg_duration']
-        report.append(f"Difference:         {improvement:+.1f} min")
+        # Estimated Overrun
+        report.append("\n### AVERAGE ESTIMATED OVERRUN ###\n")
+        report.append(f"Before (Original):  {original_metrics['avg_overrun']:+.1f} min")
+        report.append(f"After (Optimized):  {optimized_metrics['avg_overrun']:+.1f} min")
+        improvement = optimized_metrics['avg_overrun'] - original_metrics['avg_overrun']
+        report.append(f"Improvement:        {improvement:+.1f} min")
+        report.append(f"\n(Negative overrun means appointments finish early on average)")
+        
+        # Dispatch Grade
+        report.append("\n### DISPATCH GRADE (0-100 Scale) ###\n")
+        report.append(f"Before (Original):  {original_metrics['avg_grade']:.2f}/100")
+        report.append(f"After (Optimized):  {optimized_metrics['avg_grade']:.2f}/100")
+        improvement = optimized_metrics['avg_grade'] - original_metrics['avg_grade']
+        report.append(f"Improvement:        {improvement:+.2f} points")
+        report.append(f"\nGrade Components (Optimized):")
+        report.append(f"  Distance (30 pts):          {optimized_metrics['avg_distance_score']:.2f}")
+        report.append(f"  Duration (30 pts):          {optimized_metrics['avg_duration_score']:.2f}")
+        report.append(f"  Productive Dispatch (25):   {optimized_metrics['avg_productive_score']:.2f}")
+        report.append(f"  First Time Fix (15):        {optimized_metrics['avg_ftf_score']:.2f}")
+        report.append(f"\n(Historical benchmark: 56.49/100 from dispatch_history_10k)")
         
         # Workload Distribution
         report.append("\n### WORKLOAD DISTRIBUTION ###\n")
@@ -903,6 +972,24 @@ class DispatchOptimizer:
         report.append(f"Forced assignments:  {self.stats['forced_assignments']}")
         report.append(f"Overlap exceptions:  {self.stats['overlap_exceptions']}")
         report.append(f"Workload violations: {self.stats['workload_violations']}")
+        
+        # Detailed warnings breakdown
+        if warnings_df is not None and len(warnings_df) > 0:
+            report.append(f"\n### WARNINGS BREAKDOWN ###\n")
+            report.append(f"Total warnings: {len(warnings_df)}")
+            report.append(f"\nWarnings by Type:")
+            warning_counts = warnings_df['warning'].value_counts()
+            for warning_type, count in warning_counts.items():
+                report.append(f"  - {warning_type}: {count}")
+            
+            # Show affected dispatches
+            unique_dispatches = warnings_df['dispatch_id'].nunique()
+            unique_techs = warnings_df['technician_id'].nunique()
+            report.append(f"\nDispatches with warnings: {unique_dispatches}")
+            report.append(f"Technicians with warnings: {unique_techs}")
+        else:
+            report.append(f"\n### WARNINGS BREAKDOWN ###\n")
+            report.append(f"Total warnings: 0 (Perfect optimization!)")
         
         report.append("\n" + "="*70)
         
@@ -938,7 +1025,40 @@ class DispatchOptimizer:
             metrics['avg_success'] = results_df['success_probability'].mean()
             metrics['skill_match_rate'] = results_df['skill_match'].mean()
             metrics['avg_distance'] = results_df['distance'].mean()
-            metrics['avg_duration'] = results_df['estimated_duration'].mean()
+            
+            # Calculate overrun and grades
+            overruns = []
+            grades = []
+            distance_scores = []
+            duration_scores = []
+            productive_scores = []
+            ftf_scores = []
+            
+            for _, result_row in results_df.iterrows():
+                dispatch_row = dispatches[dispatches['dispatch_id'] == result_row['dispatch_id']].iloc[0]
+                scheduled_time = (dispatch_row['appointment_end_datetime'] - 
+                                 dispatch_row['appointment_start_datetime']).total_seconds() / 60
+                overrun = result_row['estimated_duration'] - scheduled_time
+                overruns.append(overrun)
+                
+                # Calculate dispatch grade
+                grade, dist_score, dur_score, prod_score, ftf_score = self.calculate_dispatch_grade(
+                    distance=result_row['distance'],
+                    overrun=overrun,
+                    success_prob=result_row['success_probability']
+                )
+                grades.append(grade)
+                distance_scores.append(dist_score)
+                duration_scores.append(dur_score)
+                productive_scores.append(prod_score)
+                ftf_scores.append(ftf_score)
+            
+            metrics['avg_overrun'] = np.mean(overruns) if overruns else 0
+            metrics['avg_grade'] = np.mean(grades) if grades else 0
+            metrics['avg_distance_score'] = np.mean(distance_scores) if distance_scores else 0
+            metrics['avg_duration_score'] = np.mean(duration_scores) if duration_scores else 0
+            metrics['avg_productive_score'] = np.mean(productive_scores) if productive_scores else 0
+            metrics['avg_ftf_score'] = np.mean(ftf_scores) if ftf_scores else 0
             
             # Calculate workload from self.assignments
             tech_workloads = {}
@@ -1005,14 +1125,52 @@ class DispatchOptimizer:
                     success_probs = ml_success_probs
                 
                 metrics['avg_success'] = np.mean(success_probs)
-                metrics['avg_duration'] = np.mean(est_durations)
                 metrics['skill_match_rate'] = np.mean([f['skill_match'] for f in dispatch_features])
                 metrics['avg_distance'] = np.mean([f['distance'] for f in dispatch_features])
+                
+                # Calculate overrun and grades
+                overruns = []
+                grades = []
+                distance_scores = []
+                duration_scores = []
+                productive_scores = []
+                ftf_scores = []
+                
+                for i, idx in enumerate(valid_indices):
+                    dispatch_row = dispatches.iloc[idx]
+                    scheduled_time = (dispatch_row['appointment_end_datetime'] - 
+                                     dispatch_row['appointment_start_datetime']).total_seconds() / 60
+                    overrun = est_durations[i] - scheduled_time
+                    overruns.append(overrun)
+                    
+                    # Calculate dispatch grade
+                    grade, dist_score, dur_score, prod_score, ftf_score = self.calculate_dispatch_grade(
+                        distance=dispatch_features[i]['distance'],
+                        overrun=overrun,
+                        success_prob=success_probs[i]
+                    )
+                    grades.append(grade)
+                    distance_scores.append(dist_score)
+                    duration_scores.append(dur_score)
+                    productive_scores.append(prod_score)
+                    ftf_scores.append(ftf_score)
+                
+                metrics['avg_overrun'] = np.mean(overruns) if overruns else 0
+                metrics['avg_grade'] = np.mean(grades) if grades else 0
+                metrics['avg_distance_score'] = np.mean(distance_scores) if distance_scores else 0
+                metrics['avg_duration_score'] = np.mean(duration_scores) if duration_scores else 0
+                metrics['avg_productive_score'] = np.mean(productive_scores) if productive_scores else 0
+                metrics['avg_ftf_score'] = np.mean(ftf_scores) if ftf_scores else 0
             else:
                 metrics['avg_success'] = 0
-                metrics['avg_duration'] = 0
+                metrics['avg_overrun'] = 0
                 metrics['skill_match_rate'] = 0
                 metrics['avg_distance'] = 0
+                metrics['avg_grade'] = 0
+                metrics['avg_distance_score'] = 0
+                metrics['avg_duration_score'] = 0
+                metrics['avg_productive_score'] = 0
+                metrics['avg_ftf_score'] = 0
             
             # Calculate workload distribution
             tech_workloads = {}
@@ -1052,6 +1210,9 @@ def main():
     print("  - Workload Balance:    35%")
     print("  - Travel Distance:     10%")
     print("  - Estimated Overrun:    5%")
+    print("\nDate Filter:")
+    print("  - Only dispatches from 2025-11-12 onwards")
+    print("  - Historical dispatches excluded")
     
     # Load models
     print("\nLoading ML models...")
@@ -1075,6 +1236,17 @@ def main():
     # Load data
     dispatches, technicians, calendar = optimizer.load_data()
     
+    # Check if there are any dispatches to optimize
+    if len(dispatches) == 0:
+        print("\n" + "="*70)
+        print("NO DISPATCHES TO OPTIMIZE")
+        print("="*70)
+        print("\nAll dispatches in the database are before 2025-11-12.")
+        print("These are historical dispatches that have already occurred.")
+        print("\nNo optimization needed.")
+        print("="*70)
+        return
+    
     # Run optimization
     assignments = optimizer.run_optimization(dispatches, technicians, calendar)
     
@@ -1085,7 +1257,7 @@ def main():
     results_df, warnings_df = optimizer.generate_outputs(dispatches, technicians, calendar)
     
     # Generate comparison report
-    optimizer.generate_comparison_report(dispatches, technicians, results_df)
+    optimizer.generate_comparison_report(dispatches, technicians, results_df, warnings_df)
     
     print("\n[6/6] Summary...")
     print("\n" + "="*70)
