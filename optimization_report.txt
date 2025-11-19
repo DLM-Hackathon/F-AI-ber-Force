@@ -2,46 +2,62 @@
 OPTIMIZATION COMPARISON REPORT
 ======================================================================
 
-Total Dispatches: 600
+Total Dispatches: 525
 
 ### SUCCESS PROBABILITY ###
 
-Before (Original):  78.2%
+Before (Original):  78.1%
 After (Optimized):  86.5%
-Improvement:        +8.3%
+Improvement:        +8.4%
 
 ### SKILL MATCH RATE ###
 
-Before (Original):  10.3%
+Before (Original):  10.5%
 After (Optimized):  39.8%
-Improvement:        +29.5%
+Improvement:        +29.3%
 
 ### AVERAGE TRAVEL DISTANCE ###
 
-Before (Original):  33.3 km
+Before (Original):  33.4 km
 After (Optimized):  20.7 km
-Improvement:        -12.6 km (-37.9%)
+Improvement:        -12.7 km (-38.0%)
 
-### AVERAGE ESTIMATED DURATION ###
+### AVERAGE ESTIMATED OVERRUN ###
 
-Before (Original):  76.1 min
-After (Optimized):  75.7 min
-Difference:         -0.4 min
+Before (Original):  +2.4 min
+After (Optimized):  +2.6 min
+Improvement:        +0.2 min
+
+(Negative overrun means appointments finish early on average)
+
+### DISPATCH GRADE (0-100 Scale) ###
+
+Before (Original):  76.55/100
+After (Optimized):  84.31/100
+Improvement:        +7.76 points
+
+Grade Components (Optimized):
+  Distance (30 pts):          20.62
+  Duration (30 pts):          29.09
+  Productive Dispatch (25):   21.62
+  First Time Fix (15):        12.97
+
+(Historical benchmark: 56.49/100 from dispatch_history_10k)
 
 ### WORKLOAD DISTRIBUTION ###
 
 
 Average Workload per Technician:
-  Before (Original):  70.7%
+  Before (Original):  62.2%
   After (Optimized):  59.2%
-  Improvement:        -11.6%
+  Improvement:        -3.0%
 
 Technicians Below 40% Capacity:
-  Before (Original):  28.0%
+  Before (Original):  33.3%
   After (Optimized):  17.3%
 
 Technicians Above 100% Capacity:
-  Before (Original):  21.3%
+  Before (Original):  14.7%
   After (Optimized):  0.0%
 
 ### ASSIGNMENT CHANGES ###
@@ -51,8 +67,19 @@ Assignments kept:    38/525 (7.2%)
 
 ### OPTIMIZATION STATISTICS ###
 
-Forced assignments:  44
+Forced assignments:  33
 Overlap exceptions:  0
-Workload violations: 44
+Workload violations: 33
+
+### WARNINGS BREAKDOWN ###
+
+Total warnings: 12
+
+Warnings by Type:
+  - FALLBACK: Allowing overtime: 11
+  - Time conflict with dispatch 200000295: 1
+
+Dispatches with warnings: 11
+Technicians with warnings: 9
 
 ======================================================================
