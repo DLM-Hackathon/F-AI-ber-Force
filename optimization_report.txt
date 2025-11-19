@@ -1,0 +1,58 @@
+======================================================================
+OPTIMIZATION COMPARISON REPORT
+======================================================================
+
+Total Dispatches: 600
+
+### SUCCESS PROBABILITY ###
+
+Before (Original):  78.2%
+After (Optimized):  86.5%
+Improvement:        +8.3%
+
+### SKILL MATCH RATE ###
+
+Before (Original):  10.3%
+After (Optimized):  39.8%
+Improvement:        +29.5%
+
+### AVERAGE TRAVEL DISTANCE ###
+
+Before (Original):  33.3 km
+After (Optimized):  20.7 km
+Improvement:        -12.6 km (-37.9%)
+
+### AVERAGE ESTIMATED DURATION ###
+
+Before (Original):  76.1 min
+After (Optimized):  75.7 min
+Difference:         -0.4 min
+
+### WORKLOAD DISTRIBUTION ###
+
+
+Average Workload per Technician:
+  Before (Original):  70.7%
+  After (Optimized):  59.2%
+  Improvement:        -11.6%
+
+Technicians Below 40% Capacity:
+  Before (Original):  28.0%
+  After (Optimized):  17.3%
+
+Technicians Above 100% Capacity:
+  Before (Original):  21.3%
+  After (Optimized):  0.0%
+
+### ASSIGNMENT CHANGES ###
+
+Assignments changed: 487/525 (92.8%)
+Assignments kept:    38/525 (7.2%)
+
+### OPTIMIZATION STATISTICS ###
+
+Forced assignments:  44
+Overlap exceptions:  0
+Workload violations: 44
+
+======================================================================

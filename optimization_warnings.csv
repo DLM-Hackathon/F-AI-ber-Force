@@ -1,0 +1,13 @@
+dispatch_id,technician_id,warning
+200000310,T900078,FALLBACK: Allowing overtime
+200000062,T900026,FALLBACK: Allowing overtime
+200000487,T900131,FALLBACK: Allowing overtime
+200000482,T900127,FALLBACK: Allowing overtime
+200000069,T900026,FALLBACK: Allowing overtime
+200000362,T900099,FALLBACK: Allowing overtime
+200000059,T900005,FALLBACK: Allowing overtime
+200000336,T900080,FALLBACK: Allowing overtime
+200000149,T900034,FALLBACK: Allowing overtime
+200000295,T900067,FALLBACK: Allowing overtime
+200000294,T900067,Time conflict with dispatch 200000295
+200000294,T900067,FALLBACK: Allowing overtime
